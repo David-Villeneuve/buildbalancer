@@ -1,0 +1,12 @@
+This directory contains files used by the load balancer scripts (read) on the clients and the bbwrap login
+shell wrapper script (write) on the hosts. 
+
+The files currently written are just files containing the job count on the host.  
+
+ie:
+
+lblinux1.count
+lblinux2.count
+somehost.count
+...
+

@@ -1,0 +1,112 @@
+To install the scripts, put them (including subdirectories) in a common read/write NFS
+mount shared by all the clients and servers which will use them.  For example:
+
+/opt/tools/buildbalancer:
+
+The file tree should look like this:
+
+buildbalancer
+├── decrfile
+├── host_select
+├── incrfile
+├── bbwrap
+├── example_site
+│   ├── data          (permissions need to be 777)
+│   │   └── README
+│   ├── lbqueues.txt
+│   └── logs          (permissions need to be 777)
+│       └── README
+
+You should create your own site directory.  Let's call it "Ottawa".   In it, you would 
+create a "lbqueues.txt" file.  The contents of this file are the queue's load balancing
+will be done with.  The format is:
+
+<queuename1>=<host1>,<host2>,<host3>,<hostN>
+<queename2>=<host3>,<host9>,<host-whatever>
+
+Now, create a symbolic link to this directory:
+
+  cd /opt/tools/buildbalancer
+  ln -s Ottawa site
+
+In this way, you could rsync this directory, ignoring symbolic links, to multiple sites
+around the world in a common tool tree, and each site can have their own queues (don't sync the
+"Ottawa" site directory ... add it to an ignore list, and don't delete files on the remote site
+which don't exist on the master ... if you know how to use rsync, you know what I mean).  
+
+On each of the build hosts, you will want to override each users' login shell with the
+bbwrap script.  If you are not using NIS, you would have entries for each user like this:
+
+  buildit:x:1001:1001:Build It,,,:/home/buildit:/opt/tools/buildbalancer/bbwrap
+
+If you are using NIS authentication, then on the build hosts configure /etc/nsswitch passwd
+and group entries in compat
+
+mode:
+
+  passwd:    compat
+  group:     compat
+
+Then at the end of the /etc/passwd file:
+
+  # The following users will get their regular login shell from NIS
+  +jenkins::::::
+  +myadminuser::::::
+  +sdeadm::::::
+  # All other users will get the bbwrap script as their shell
+  +::::::/opt/tools/buildbalancer/bbwrap
+
+and at the bottom of /etc/group:
+
+  +
+
+You may need to reboot the build host for this to take effect.  
+
+Next, you need to initialize the count files for the build hosts.  For each build host, with a non-admin user
+initiate an ssh command:
+
+   ssh -t <hostname> uptime
+
+If all goes well, there should be a <host>.count file in your site/data directory,
+and a site/logs/<hostname>.jobs.log file.  If not, then you need to debug the compat mode and
+shell override for your host.  
+
+Once all your hosts have been setup like this, then you can select the least loaded host by using the 
+/opt/tools/buildbalancer/host_select command.  
+
+  set BLDHOST=`../host_select.py lblinux`
+
+Then
+  
+  ssh -t $BLDHOST uptime
+  10:48  up 2 days, 14:11, 6 users, load averages: 1.53 1.46 1.41
+
+Now, if you wanted to run a compile on the host, you would need to do some scripting.  This would
+be needed to customize your build environment anyway.  
+
+   /opt/tools/bin/build_my_stuff would be a script that knows how to build your software.  You
+      would want to pass to it the path where the source code is to be built.   Finally, if you 
+      want each user to have their own environment customizations, you could pass another
+      parameter to pass a script to source to setup the user's customizations.  So, the command to
+      issue to the remote host would be:
+
+  ssh -t $BLDHOST /opt/tools/bin/build_my_stuff /path_to_my_base_dir $HOME/bin/setup_my_build_environment
+
+In fact, you would probably create a wrapper script for this, called "rmake", which would grab the
+current directory to use as the first parm, it might use a set name for a user customization script, or a
+common one in a tools directory, and then use the host_select to set the build host, and then create the
+aforementioned command line and issue it.  The end user would just go to their build directory and type
+
+   rmake
+
+AVOIDING THE SSH PASSWORD PROMPT
+
+You can avoid having ssh prompt you for a password every time an ssh is sent to the host.   For this
+would would use ssh keys.  If you are using NIS and common mounted home directories:
+
+  ssh-keygen -f id_rsa -t rsa -N ''
+  cd $HOME/.ssh
+  cat id_rsa.pub >> authorized_keys
+
+If you were not using common home directories, you could configure the hosts to use trusted logins.
+Info for this can be found at http://www.snailbook.com/faq/trusted-host-howto.auto.html 

@@ -1,0 +1,9 @@
+# This is a file with lists of servers in queues
+# Format is queueName=server1,server2,server3 # Optional comment
+# It is important that each of these host be resolvable by DNS or
+# local host file or the name lookup timeouts will make the host
+# selector take a very log time.
+#
+lbsolaris=lbsol1,lbsol2,lbsol3
+lblinux=lblinux1,lblinux2,lblinux3,lblinux4,lblinux5,lblinux6,lblinux7
+

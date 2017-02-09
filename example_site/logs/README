@@ -1,0 +1,17 @@
+The site/logs directory will contain logs written by the bbwrap shell wrapper on each host.
+
+The logs directory must have permissions 777 so that any user running a job on the remote
+host can write the log file, as the wrapper is running as that user (if all users are in the
+same group, permisson of 775 are ok too).  
+
+Each host will create a file called <hostname>.jobs.log
+
+Logs look like this:
+
+02/03/17 Job zbox1.2328 for buildit took 60 seconds ran:sleep 60
+
+If the user terminates a command (through control-c):
+
+02/03/17 Job zbox1.3261 for buildit took 3 seconds terminated:-c sleep 60
+
+

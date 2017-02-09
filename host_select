@@ -1,0 +1,103 @@
+#!/usr/bin/python
+#
+# Program:  host_selector
+# Author:   David Villeneuve
+# Created:  16-Aug-2016
+# Purpose:  Given the name of a host list, read that list of hosts
+#           from a control file, and a list of files containing a job
+#           count for each host, select a random host with the least
+#           number of jobs running.  
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+import random
+import re
+import sys
+import socket
+import os
+
+# Some constants to configure:
+
+controlFileRoot = os.path.dirname(os.path.realpath(sys.argv[0]))
+queueFN = 'lbqueues.txt'
+queueFile = controlFileRoot + '/site/' + queueFN
+countFileSubDir = 'site/data'
+countFileDir = controlFileRoot + '/' + countFileSubDir + '/'
+def isServerReady(host):
+# Check to see if port 22 (ssh) is listening
+    port = 22
+    hostAddr = ""
+    try:
+        hostAddr = socket.gethostbyname(host)
+    except:
+        return False
+
+    try:
+        testSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        testSocket.settimeout(0.5)
+        testSocket.connect((host, port))
+        testSocket.close()
+    except:
+        return False
+
+    return True
+
+# Make sure we tried to pass a queue name
+myArgs=sys.argv
+if len(myArgs) < 2:
+    print "Error:  need to pass a queue name"
+    sys.exit()
+
+# Get list of servers for queue
+queue = myArgs[1]
+# Read file and look for queue
+servers = {} # Empty map
+with open(queueFile,'rb') as QF:
+    for qLine in QF:
+        # Remove comments
+        qLine = qLine.split('#')[0].strip()
+        qInfo = qLine.split('=') 
+        if len(qInfo) < 2:
+            # Single entry, can't be a queue as no hosts.  Skip it
+            continue
+        if qInfo[0] != queue:
+            continue
+        # found the queue requested, get list
+        hostList = qInfo[1].split(',')
+        if len(hostList) < 1:
+             continue
+        for host in hostList:
+            # Make sure host is running ssh
+            if isServerReady(host):
+                # Read Count
+                countFN=countFileDir + host + '.count'
+                try:
+                    with open(countFN) as CFN:
+                        count = CFN.readline().strip()
+                        servers[host]=int(count)
+                        close(CFN)
+                except:
+                    continue
+
+# Select random host from lowest. Use lambda temp function to
+# facillitate lowest val selection based on second column of table
+lowest = min (servers.items(), key=lambda x: x[1])[1]
+
+# Now create a table of keys in map which contains the lowest value
+lowServers = [svr for svr, load in servers.items() if load == lowest]
+
+# Pick random one
+selectedHost = random.choice(lowServers)
+sys.stdout.write(selectedHost)
+sys.stdout.flush()

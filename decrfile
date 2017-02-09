@@ -1,0 +1,106 @@
+#!/usr/bin/python
+#
+# Program:  decrfile
+# Author:   David Villeneuve
+# Created:  01-Feb-2017
+# Purpose:  Given a file, lock the file and decrement the internal counter
+#           If the file does not exist, create it.
+#           Ensure the permission is such that any user can write to it
+#           If the count goes below 0, set it to 0
+#
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+import sys
+import os
+import fcntl
+import time
+import errno
+
+# Constants
+
+DEBUG = False
+#DEBUG = True
+
+# Define functions
+
+def bugbug(output):
+  global DEBUG
+  if DEBUG:
+    print output + "\n"
+
+def printHelp():
+  print "\nThis script takes one argument, which is the name of file in which to hold \n\
+a counter.  If the file does not exist, it gets created and filled with the value of \"0\".\n\n\
+Note that the directory which contains the file needs to be world writable, or at least\n\
+writable by the first person to invoke this.\n\n\
+Otherwise it will take the number contained in the file and will decrement it by one.\n\n"
+
+
+# Some constants to configure:
+scriptFileRoot = os.path.dirname(os.path.realpath(sys.argv[0]))
+
+# Make sure we tried to pass a file name
+myArgs=sys.argv
+if len(myArgs) < 2:
+    printHelp()
+    sys.exit()
+
+countFileName=myArgs[1]
+bugbug("File is " + countFileName)
+
+# If file does not exist, create it with the right permissions
+
+if not os.path.isfile(countFileName):
+  # Create it
+  bugbug("Creating file " + countFileName + " as it does not yet exist.")
+  with open(countFileName,'w+') as countF:
+    countF.seek(0)
+    countF.write(str(0))
+  os.chmod(countFileName, 0666)
+
+# At this point we can assume the file exists.  We need to be the
+# only writer to it.   
+
+with open(countFileName,'r+') as countF:
+  lockCount = 0
+  haveLock = False
+  while lockCount < 5:
+    lockCount = lockCount + 1
+    try:
+        bugbug("Attempt to lock file #" + str(lockCount) + "...")
+        fcntl.flock(countF, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        break
+    except IOError as e:
+       # Raise on unreleated IOErrors
+       if e.errno != errno.EAGAIN:
+           raise
+       else:
+          time.sleep(0.2)
+  if lockCount > 4:
+    # Assume we did not get it. 
+    print "Error:  Count not lock countfile countFileName\n"
+    exit()
+  # Assume we got it.  
+  bugbug ("Writing to file")
+  curVal = int(countF.read())
+  countF.seek(0)
+  curVal = curVal -1
+  if curVal < 0:
+     curVal=0
+  countF.write(str(curVal))
+  # Release lock
+  fcntl.flock(countF, fcntl.LOCK_UN)
+
+

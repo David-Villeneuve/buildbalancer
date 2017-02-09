@@ -1,0 +1,209 @@
+#!/bin/ksh
+###############################################################################
+# Author: David Villeneuve
+# Created: 01-Feb-2017
+#
+# Description:  This script is run instead of the users' login shell, and
+#   provides a mecanism to run an ssh command sent to it very
+#   much like an old fashioned "batch" job.  
+#
+#   It does this so that we can (a) prevent users from just logging into
+#   the host and using it as their personal big server, (b) keep a count
+#   of the jobs running on the host (so we can do some load balancing)
+#
+#   We can't replicate the users' login environment, and because this host may
+#   even be a different OS than the login environment that the command is sent from
+#   we should not even try.  Rather, whichever system is sending commands to 
+#   be run as batch will need to do this via some kind of wrapper script, which
+#   will configure the user's environment.  For example, if the user is using
+#   this to send a command from linux to a Solaris server to compile a solaris
+#   program from source code stored in clearcase, then the wrapper script needs
+#   to be responsible for setting up paths, entering the appropriate clearcase view,
+#   setting the appropriate directory, configuring the include paths, etc, and then
+#   running the needed/requested command.  
+#
+#   NOTE:  This load sharing system is an n to n peer system, so there is normally
+#          no single point of failure.  However, having said that, it is depending on
+#          having the script and control files in a common NFS mounted repository. 
+#          Normally this would be a filer with redundant disk/network, but if not
+#          then the shared space is a common point of failure.    
+#  
+#   NOTE:  Trapping of signals only works if the connection is established with
+#          ssh with the "-t" option. ie:  ssh -t <hostname> commandline
+#
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# 
+###############################################################################
+
+#### Some housekeeping.  Customize for your specific environment here:
+USE_NIS=0
+DEFAULT_SHELL=/bin/bash
+BUILD_ID="buildit"   # Userid of build/operations ... give priority
+
+# If there is a special command or program to be spawned that does not need to exit
+# then this is the patter we will grep for.  By default we pick ICA if the host is
+# also a Citrix host (real case)
+ALLOWED_LOGIN_PATTERN="\/opt\/ICA\/Scripts\/"
+
+### End of housekeeping
+
+DEBUG=1
+SCRIPTDIR=($(cd $(dirname $0);echo $PWD))
+SITEDIR="${SCRIPTDIR}/site"
+SCRIPTNAME=($(basename $0))
+DEBUG_FILE=$HOME/${SCRIPTNAME}_log.txt
+
+Platform=`uname`
+if [ $Platform = "SunOS" ]; then
+  NICECMD=/usr/bin/nice 
+  MYUSERID=`/usr/ucb/whoami`
+  PERLCMD=/bin/perl
+else
+  NICECMD=/usr/bin/nice
+  MYUSERID=`/usr/bin/whoami`
+  PERLCMD=/usr/bin/perl
+fi
+
+HOST_NAME=`uname -n | cut -d "." -f1`
+JOB_ID=$HOST_NAME.$$
+START_TIME=`$PERLCMD -e 'print time();'`
+STOP_TIME=$START_TIME
+LOGROOT=${SITEDIR}/logs/
+LOGFILE=${LOGROOT}${HOST_NAME}.jobs.log
+COUNTFILE=${SITEDIR}/data/$HOST_NAME.count
+THIS_DATE=`date +%D`
+
+function cleanup 
+{
+  echo "Caught Signal ... quitting."
+
+  # Cleanup
+  # If you need to customize your environment further, you could put code in here to do
+  # things like change permissions on common files produced/used, or remove lock files, or
+  # whatever needs doing
+
+  #Write the log
+  STOP_TIME=`$PERLCMD -e 'print time();'`
+  TOTAL_TIME=$((STOP_TIME-START_TIME))
+  echo "$THIS_DATE Job $JOB_ID for $MYUSERID took $TOTAL_TIME seconds terminated:$PARMS" >> $LOGFILE
+  ${SCRIPTDIR}/decrfile $COUNTFILE
+
+  exit 1
+ }
+
+bugbug() {
+
+if [[ $DEBUG == 1 ]]
+then
+  echo $1 >> $DEBUG_FILE
+fi
+return 0
+}
+
+
+PARMS=$@
+
+if [[ ${USE_NIS} -eq 1 ]]
+then
+  export SHELL=`/usr/bin/ypmatch \`/usr/bin/id 2>/dev/null | awk -F\( '{print $2}' | awk -F\) '{print $1}'\` passwd | awk -F: '{print $7}'`
+else
+   SHELL=$DEFAULT_SHELL
+fi
+
+bugbug "Entering script on $HOST_NAME with parms $PARMS\n"
+
+# First check to see if a user is logging in via some allowed script/environment
+# If so, then we fork this off and let it run and drop control
+
+echo $@ | grep "${ALLOWED_LOGIN_PATTERN}" > /dev/null
+if [[ $? -eq 0 ]]
+then
+  # Remove -c parm and exec, using parent process I/O, fork off script
+  shift
+  bugbug "Running allowed login type program now.\n"
+  exec  $@ |&
+  exit
+fi
+
+# If we are not called as part of SSH, then just run, else we'll do the rest of the script
+
+if [[ -z "$SSH_CONNECTION" ]]
+then
+  # Not ssh.  Just run shell
+  bugbug "just run shell...\n"
+   exec $SHELL 
+  exit
+fi
+
+bugbug "Now entering Load Sharing part of script as part of SSH\n"
+
+LOCKED=/var/tmp/locked
+LOGINACTIVE=0
+
+if [[ -f $LOCKED ]]
+then
+  echo "** LOAD SHARE NOTICE **:  Found file /var/tmp/locked. This host has been disabled."
+  exit 255
+fi
+
+# Ok, so at this point we are commited, incrment the job count
+${SCRIPTDIR}/incrfile $COUNTFILE
+
+if [[ $SHELL = "/bin/false" ]]
+then
+  export SHELL="/bin/sh"
+fi
+
+if [[ $SHELL = "/dev/null" ]]
+then
+   export SHELL="/bin/sh"
+fi
+
+#Check to see if an interactive shell...
+
+echo $@ | grep ^-c > /dev/null
+if [[ $? -eq 0 ]]
+then
+
+  shift
+
+  MYVAL=$@
+  bugbug "Running profile \n"
+  . /etc/profile 1> /dev/null 2> /dev/null
+  # Some systems' profile may intercept signals, so take it over
+  trap "cleanup 1 2 3 5 6 9 15 36 37" EXIT
+
+  SCRIPTNAME=$(echo $1 | awk '{print $1}')
+
+    # What was passed was not a script, must be a command to run
+    if [[ -f $HOME/.login ]]
+    then
+      eval $HOME/.login 2> /dev/null 2> /dev/null
+    fi
+
+    # Finally, we don't nice loadbuild as it has priority
+    if [ $MYUSERID = $BUILD_ID ]; then
+      NICECMD=""
+    fi
+    bugbug "Now executing command: $MYVAL\n"
+    $NICECMD $MYVAL
+
+    #Write the log
+    STOP_TIME=`$PERLCMD -e 'print time();'`
+    TOTAL_TIME=$((STOP_TIME-START_TIME))
+    echo "$THIS_DATE Job $JOB_ID for $MYUSERID took $TOTAL_TIME seconds ran:$MYVAL" >> $LOGFILE
+    ${SCRIPTDIR}/decrfile $COUNTFILE
+
+fi

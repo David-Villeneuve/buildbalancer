@@ -2,6 +2,9 @@
 ###############################################################################
 # Author: David Villeneuve
 # Created: 01-Feb-2017
+# History: 09-Mar-2017 * davillen * Fixed signal processing and added user shell
+#                                   profile script execution to setup environment more
+#                                   like a users' regular login environment
 #
 # Description:  This script is run instead of the users' login shell, and
 #   provides a mecanism to run an ssh command sent to it very
@@ -53,7 +56,7 @@ DEFAULT_SHELL=/bin/bash
 BUILD_ID="buildit"   # Userid of build/operations ... give priority
 
 # If there is a special command or program to be spawned that does not need to exit
-# then this is the patter we will grep for.  By default we pick ICA if the host is
+# then this is the pattern we will grep for.  By default we pick ICA if the host is
 # also a Citrix host (real case)
 ALLOWED_LOGIN_PATTERN="\/opt\/ICA\/Scripts\/"
 
@@ -102,6 +105,11 @@ function cleanup
 
   exit 1
  }
+
+function normalexit
+{
+  exit 1
+}
 
 bugbug() {
 
@@ -154,11 +162,11 @@ LOGINACTIVE=0
 
 if [[ -f $LOCKED ]]
 then
-  echo "** LOAD SHARE NOTICE **:  Found file /var/tmp/locked. This host has been disabled."
+  echo "** Build Balancer **:  Found file /var/tmp/locked. This host has been disabled."
   exit 255
 fi
 
-# Ok, so at this point we are commited, incrment the job count
+# Ok, so at this point we are committed, increment the job count
 ${SCRIPTDIR}/incrfile $COUNTFILE
 
 if [[ $SHELL = "/bin/false" ]]
@@ -188,22 +196,23 @@ then
   SCRIPTNAME=$(echo $1 | awk '{print $1}')
 
     # What was passed was not a script, must be a command to run
-    if [[ -f $HOME/.login ]]
-    then
-      eval $HOME/.login 2> /dev/null 2> /dev/null
-    fi
 
+    # What shell do we run?  
+    export SHELL_SUFFIX=`basename $SHELL`
+    export SHELL_WRAP="${SCRIPTDIR}/shells/run_cmd.${SHELL_SUFFIX}"
+    
     # Finally, we don't nice loadbuild as it has priority
     if [ $MYUSERID = $BUILD_ID ]; then
       NICECMD=""
     fi
     bugbug "Now executing command: $MYVAL\n"
-    $NICECMD $MYVAL
+    $NICECMD $SHELL_WRAP $MYVAL
 
     #Write the log
     STOP_TIME=`$PERLCMD -e 'print time();'`
     TOTAL_TIME=$((STOP_TIME-START_TIME))
     echo "$THIS_DATE Job $JOB_ID for $MYUSERID took $TOTAL_TIME seconds ran:$MYVAL" >> $LOGFILE
     ${SCRIPTDIR}/decrfile $COUNTFILE
-
+    # Normal exit
+    trap "normalexit 1 2 3 5 6 9 15 36 37" EXIT
 fi
